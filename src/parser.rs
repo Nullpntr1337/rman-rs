@@ -187,6 +187,7 @@ impl RiotManifest {
             let bytes_map: HashMap<String, Vec<u8>> =
                 Arc::try_unwrap(bytes_map).unwrap().into_inner().unwrap();
 
+            let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
             for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
                 let bundle_file_name = format!("{:016X}.bundle", bundle_id);
 
@@ -201,7 +202,6 @@ impl RiotManifest {
                 let decompressed_chunk =
                     zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
 
-                let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
                 file.write_all(&decompressed_chunk).unwrap();
             }
         }
