@@ -3,10 +3,13 @@ pub mod manifest;
 
 use header::Header;
 use manifest::ManifestData;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use reqwest::header::RANGE;
 
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::thread::{self, available_parallelism};
 use std::{cmp, fs};
 
 use log::debug;
@@ -123,32 +126,45 @@ impl RiotManifest {
     }
 
     /// Example
-    pub fn download_files(&self, files: Vec<File>, bundle_cdn: String, output_path: String) {
-        let mut bundle_urls_min: HashMap<String, u32> = HashMap::new();
-        let mut bundle_urls_max: HashMap<String, u32> = HashMap::new();
+    pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str, output_path: &str) {
+        let mut bundle_urls: HashMap<String, (u32, u32)> = HashMap::new();
 
         for file in files {
             for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
                 let from = offset;
                 let to = offset + compressed_size - 1;
 
-                let bundle_url = format!("{}/{:016X}.bundle", bundle_cdn.as_str(), bundle_id);
+                let bundle_url = format!("{}/{:016X}.bundle", bundle_cdn, bundle_id);
 
-                let new_min = match bundle_urls_min.get(bundle_url.as_str()) {
-                    Some(min) => cmp::min(min, &from),
-                    None => &from,
-                };
-                let new_max = match bundle_urls_max.get(bundle_url.as_str()) {
-                    Some(max) => cmp::max(max, &to),
-                    None => &to,
-                };
-
-                bundle_urls_min.insert(bundle_url.clone(), *new_min);
-                bundle_urls_max.insert(bundle_url, *new_max);
+                // Update min and max
+                bundle_urls
+                    .entry(bundle_url)
+                    .and_modify(|(min, max)| {
+                        *min = cmp::min(*min, from);
+                        *max = cmp::max(*max, to);
+                    })
+                    .or_insert((from, to));
             }
         }
 
-        println!("Bundles needed max -> {:#?}", bundle_urls_max);
+        // Process the HashMap in parallel
+        let available_parallelism = rayon::current_num_threads();
+        println!("Using {} threads", available_parallelism);
+
+        bundle_urls.par_iter().for_each(|(bundle_url, (from, to))| {
+            let client = reqwest::blocking::Client::new();
+            let response = client
+                .get(bundle_url)
+                .header(RANGE, format!("bytes={from}-{to}"))
+                .send()
+                .unwrap();
+
+            let _bytes = response.bytes().unwrap();
+        });
+
+        //Start threads(cpu core count) to download all the bundles with range of min -> max
+
+        //Run code here to parse the bundles into actual files
     }
 
     // pub fn download_files(files: Vec<File>, bundle_cdn: String, output: String) -> Result<()> {

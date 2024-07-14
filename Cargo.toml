@@ -15,7 +15,10 @@ byteorder = "1.4.3"
 flatbuffers = "24.3.25"
 futures = "0.3.30"
 log = "0.4.20"
-reqwest = { version = "0.12.5", default-features = false }
+rayon = "1.10.0"
+reqwest = { version = "0.12.5", default-features = false, features = [
+    "blocking",
+] }
 serde = { version = "1.0.188", features = ["derive"], optional = true }
 stopwatch = "0.0.7"
 thiserror = "1.0.49"
