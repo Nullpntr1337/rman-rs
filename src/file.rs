@@ -178,16 +178,18 @@ impl File {
             let to = offset + compressed_size - 1;
 
             let mut sw = Stopwatch::start_new();
+            let bundle_url = format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str());
             let response = client
-                .get(format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str()))
+                .get(bundle_url.clone())
                 .header(header::RANGE, format!("bytes={from}-{to}"))
                 .send()
                 .await?;
             println!(
-                "Took {}ms to fetch response ({}-{})",
+                "Took {}ms to fetch response ({}-{}) from {}",
                 sw.elapsed_ms(),
                 from,
-                to
+                to,
+                bundle_url
             );
 
             sw.restart();
