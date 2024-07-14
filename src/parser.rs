@@ -4,13 +4,14 @@ pub mod manifest;
 use header::Header;
 use manifest::ManifestData;
 
-use std::fs;
+use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::{cmp, fs};
 
 use log::debug;
 
-use crate::{ManifestError, Result};
+use crate::{File, ManifestError, Result};
 
 /// Main parser object.
 ///
@@ -122,7 +123,70 @@ impl RiotManifest {
     }
 
     /// Example
-    pub fn download_files(&self) {
-        println!("hello")
+    pub fn download_files(&self, files: Vec<File>, bundle_cdn: String, output_path: String) {
+        let mut bundle_urls_min: HashMap<String, u32> = HashMap::new();
+        let mut bundle_urls_max: HashMap<String, u32> = HashMap::new();
+
+        for file in files {
+            for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
+                let from = offset;
+                let to = offset + compressed_size - 1;
+
+                let bundle_url = format!("{}/{:016X}.bundle", bundle_cdn.as_str(), bundle_id);
+
+                let new_min = match bundle_urls_min.get(bundle_url.as_str()) {
+                    Some(min) => cmp::min(min, &from),
+                    None => &0,
+                };
+                let new_max = match bundle_urls_max.get(bundle_url.as_str()) {
+                    Some(max) => cmp::max(max, &to),
+                    None => &0,
+                };
+
+                bundle_urls_min.insert(bundle_url.clone(), *new_min);
+                bundle_urls_max.insert(bundle_url, *new_max);
+            }
+        }
+
+        println!("Bundles needed min -> {:#?}", bundle_urls_min);
     }
+
+    // pub fn download_files(files: Vec<File>, bundle_cdn: String, output: String) -> Result<()> {
+    //     let client = Client::new();
+    //     let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
+
+    //     for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
+    //         let from = *offset;
+    //         let to = from + compressed_size - 1;
+
+    //         if !bundle_byte_map.contains_key(bundle_id) {
+    //             let response = client
+    //                 .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
+    //                 .send()
+    //                 .await?;
+
+    //             let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
+    //             bundle_byte_map.insert(bundle_id, bytes);
+    //         }
+
+    //         debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
+    //         let uncompressed_size: usize = (*uncompressed_size).try_into()?;
+    //         debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+
+    //         // Get the bundle from the hashmap
+    //         let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
+    //         let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
+
+    //         let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
+    //             Ok(result) => result,
+    //             Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
+    //         };
+
+    //         // Write the relevant slice to the writer
+    //         writer.write_all(&decompressed_chunk)?;
+    //     }
+
+    //     bundle_byte_map.clear();
+    //     Ok(())
+    // }
 }
