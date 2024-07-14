@@ -7,7 +7,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use reqwest::header::RANGE;
 
 use std::collections::HashMap;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::{cmp, fs};
@@ -179,12 +179,31 @@ impl RiotManifest {
                 });
 
             // Extract the file from the bundles
+            println!("Extracting {}...", lol_file.name);
             if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
                 fs::create_dir_all(parent_dir).unwrap();
             }
 
-            let _bytes_map: HashMap<String, Vec<u8>> =
+            let bytes_map: HashMap<String, Vec<u8>> =
                 Arc::try_unwrap(bytes_map).unwrap().into_inner().unwrap();
+
+            for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
+                let bundle_file_name = format!("{:016X}.bundle", bundle_id);
+
+                let (min, _max) = bundles_for_file.get(bundle_file_name.as_str()).unwrap();
+                let from = offset - min;
+                let to = offset + compressed_size - 1 - min;
+
+                let bundle_bytes = bytes_map.get(bundle_file_name.as_str()).unwrap();
+                let uncompressed_size: usize = (uncompressed_size).try_into().unwrap();
+                let bundle_slice = &bundle_bytes[from as usize..to as usize + 1];
+
+                let decompressed_chunk =
+                    zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
+
+                let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
+                file.write_all(&decompressed_chunk).unwrap();
+            }
         }
 
         //Extract files from bundles
