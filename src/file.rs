@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use futures::future::join_all;
-use log::debug;
 use reqwest::header;
 use reqwest::Client;
 use reqwest::IntoUrl;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -172,11 +173,13 @@ impl File {
         bundle_url: U,
     ) -> Result<()> {
         let client = Client::new();
+        let semaphore = Arc::new(Semaphore::new(10)); // Limit concurrent requests
 
         let futures: Vec<_> = self
             .chunks
             .iter()
             .map(|(bundle_id, offset, uncompressed_size, compressed_size)| {
+                let semaphore = Arc::clone(&semaphore);
                 let from = *offset;
                 let to = *offset + compressed_size - 1;
                 let url = format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id);
@@ -184,6 +187,7 @@ impl File {
                 {
                     let value = client.clone();
                     async move {
+                        let _permit = semaphore.acquire().await.unwrap();
                         let response = value
                             .get(&url)
                             .header(header::RANGE, format!("bytes={from}-{to}"))
