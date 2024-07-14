@@ -164,6 +164,7 @@ impl File {
     /// # Examples
     ///
     /// See [downloading a file](index.html#example-downloading-a-file).
+
     pub async fn download<W: Write + Send, U: IntoUrl + Send>(
         &self,
         mut writer: W,
@@ -172,14 +173,11 @@ impl File {
         let client = Client::new();
         let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
 
-        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
+        for (bundle_id, offset, _, compressed_size) in &self.chunks {
             let from = *offset;
             let to = from + compressed_size - 1;
 
-            if bundle_byte_map.contains_key(bundle_id) {
-                // Get the decompressed_chunk from the hashmap
-                let decompressed_chunk = bundle_byte_map.get(bundle_id).unwrap();
-
+            if let Some(decompressed_chunk) = bundle_byte_map.get(bundle_id) {
                 // Write the relevant slice to the writer
                 writer.write_all(&decompressed_chunk[from as usize..to as usize + 1])?;
             } else {
@@ -188,12 +186,15 @@ impl File {
                     .send()
                     .await?;
 
-                debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
-                let uncompressed_size: usize = (*uncompressed_size).try_into()?;
-                debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+                debug!("Decompressing bundle {}", bundle_id);
+
+                let compressed_data = response.bytes().await?;
+
+                // Estimate capacity or use a predefined size
+                let estimated_capacity = compressed_data.len() * 3; // Example estimate
 
                 let decompressed_chunk =
-                    match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
+                    match zstd::bulk::decompress(&compressed_data, estimated_capacity) {
                         Ok(result) => result,
                         Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
                     };
