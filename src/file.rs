@@ -183,13 +183,20 @@ impl File {
                 .header(header::RANGE, format!("bytes={from}-{to}"))
                 .send()
                 .await?;
-            println!("Took {}ms to fetch response", sw.elapsed_ms());
+            println!(
+                "Took {}ms to fetch response ({}-{})",
+                sw.elapsed_ms(),
+                from,
+                to
+            );
 
+            sw.restart();
             debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
             let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
             debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+            println!("Took {}ms to convert un_size to usize", sw.elapsed_ms());
 
-            sw = Stopwatch::start_new();
+            sw.restart();
             let decompressed_chunk =
                 match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
                     Ok(result) => result,
@@ -197,7 +204,7 @@ impl File {
                 };
             println!("Took {}ms to fetch decompress", sw.elapsed_ms());
 
-            sw = Stopwatch::start_new();
+            sw.restart();
             writer.write_all(&decompressed_chunk)?;
             println!("Took {}ms to write to disk", sw.elapsed_ms());
         }
