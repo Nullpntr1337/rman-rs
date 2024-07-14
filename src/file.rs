@@ -189,7 +189,7 @@ impl File {
             let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
             debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
 
-            sw.restart();
+            sw = Stopwatch::start_new();
             let decompressed_chunk =
                 match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
                     Ok(result) => result,
@@ -197,7 +197,7 @@ impl File {
                 };
             println!("Took {}ms to fetch decompress", sw.elapsed_ms());
 
-            sw.restart();
+            sw = Stopwatch::start_new();
             writer.write_all(&decompressed_chunk)?;
             println!("Took {}ms to write to disk", sw.elapsed_ms());
         }
