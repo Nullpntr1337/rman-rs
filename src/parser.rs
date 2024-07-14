@@ -166,6 +166,7 @@ impl RiotManifest {
                 .par_iter()
                 .for_each(|(bundle_file_name, (from, to))| {
                     let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
+                    let expected_length = (to - from + 1) as usize; // Calculate expected byte length
 
                     let mut attempt = 0;
                     let result = loop {
@@ -177,15 +178,23 @@ impl RiotManifest {
                         {
                             Ok(response) => match response.bytes() {
                                 Ok(bytes) => {
-                                    let mut bytes_map = bytes_map.lock().unwrap();
-                                    println!(
-                                        "Saved {} bytes for range {}->{}",
-                                        bytes.len(),
-                                        from,
-                                        to
-                                    );
-                                    bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
-                                    break Ok(());
+                                    // Verify byte length
+                                    if bytes.len() != expected_length {
+                                        eprintln!(
+                                            "Byte length mismatch for {}: expected {}, got {}",
+                                            bundle_file_name,
+                                            expected_length,
+                                            bytes.len()
+                                        );
+                                        if attempt >= 3 {
+                                            //TODO: fix
+                                            break Ok(());
+                                        }
+                                    } else {
+                                        let mut bytes_map = bytes_map.lock().unwrap();
+                                        bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
+                                        break Ok(());
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Attempt {}/3 failed: {}", attempt, e);
