@@ -162,11 +162,25 @@ impl RiotManifest {
                 let client = reqwest::blocking::Client::new();
                 let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
 
-                let response = client
-                    .get(bundle_url)
-                    .header(RANGE, format!("bytes={from}-{to}"))
-                    .send()
-                    .unwrap();
+                let mut attempts = 0;
+                let response = loop {
+                    attempts += 1;
+                    let result = client
+                        .get(bundle_url.clone())
+                        .header(RANGE, format!("bytes={from}-{to}"))
+                        .send();
+
+                    match result {
+                        Ok(res) => break res,
+                        Err(e) => {
+                            if attempts >= 3 {
+                                panic!("Request failed after 3 attempts: {:?}", e);
+                            } else {
+                                println!("Failed download! Retrying...")
+                            }
+                        }
+                    }
+                };
 
                 let bundle_path = format!("{}/{}", temp_dir, bundle_file_name);
                 let bytes = response.bytes().unwrap();
