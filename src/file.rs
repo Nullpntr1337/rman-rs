@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use futures::stream::{self, StreamExt};
 use reqwest::header;
@@ -168,7 +169,7 @@ impl File {
     /// See [downloading a file](index.html#example-downloading-a-file).
     pub async fn download<W: Write + Send + 'static, U: IntoUrl + Send>(
         &self,
-        mut writer: W,
+        writer: Arc<Mutex<W>>, // Use Arc<Mutex<W>> to share ownership safely
         bundle_url: U,
     ) -> Result<()> {
         let client = Client::new();
@@ -182,6 +183,7 @@ impl File {
                 .map(|(bundle_id, offset, uncompressed_size, compressed_size)| {
                     let client = client.clone();
                     let url = url.clone();
+                    let writer = Arc::clone(&writer);
 
                     task::spawn(async move {
                         let from = offset;
@@ -198,23 +200,20 @@ impl File {
                         let decompressed_chunk =
                             zstd::bulk::decompress(&compressed_bytes, uncompressed_size)?;
 
-                        Ok::<_, anyhow::Error>(decompressed_chunk)
+                        let mut writer = writer.lock().unwrap();
+                        writer.write_all(&decompressed_chunk)?;
+
+                        Ok::<_, anyhow::Error>(())
                     })
                 });
-
-        // Use a buffer to write the decompressed chunks
-        let mut buffer = vec![];
 
         // Process the futures concurrently with a maximum of N concurrent tasks
         const MAX_CONCURRENT: usize = 4;
         let mut stream = stream::iter(chunk_futures).buffer_unordered(MAX_CONCURRENT);
 
-        while let Some(chunk_result) = stream.next().await {
-            let decompressed_chunk = chunk_result.unwrap().unwrap();
-            buffer.extend_from_slice(&decompressed_chunk);
+        while let Some(result) = stream.next().await {
+            result.unwrap().unwrap();
         }
-
-        writer.write_all(&buffer)?;
 
         Ok(())
     }
