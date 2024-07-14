@@ -1,4 +1,11 @@
-pub fn bitch() {
+//! Collection of entries from the parsed flatbuffer schema.
+//!
+//! NOTE: these structs are only useful for viewing the internal structure of the parsed
+//! flatbuffer schema. If you just wish to see the containing files and download them, see
+//! [File][crate::File].
+
+///example
+pub fn download_files() {
     println!("hello")
 }
 

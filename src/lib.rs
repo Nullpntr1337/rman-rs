@@ -171,7 +171,7 @@
 //! [serde-deserialize]: https://docs.rs/serde/latest/serde/trait.Deserialize.html
 //! [zstd]: https://github.com/facebook/zstd
 
-mod downloader;
+pub mod downloader;
 pub mod entries;
 mod error;
 mod file;

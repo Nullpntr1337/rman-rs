@@ -1,9 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
-
-use log::debug;
-use reqwest::Client;
-use reqwest::IntoUrl;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -136,74 +131,74 @@ impl File {
     }
 }
 
-impl File {
-    /// Function to download the associated file contents.
-    ///
-    /// This is done by looping through all of the chunks of this file, and for each loop:
-    /// - get the [bundle id](crate::entries::BundleEntry::id) it belongs to, and convert it to
-    /// hexadecimal value with a fixed size of 16 (if the length is less than 16, zeros are
-    /// padded to the left).
-    /// - download the chunk from the url using the range header
-    /// - [decompress the chunk][zstd::bulk::decompress]
-    /// - write chunk.
-    ///
-    /// # Errors
-    ///
-    /// If downloading fails, the error [`ReqwestError`][crate::ManifestError::ReqwestError] is
-    /// returned.
-    ///
-    /// If converting [`uncompressed_size`](crate::Header::uncompressed_size) to [`usize`] fails,
-    /// the error [`ConversionFailure`][crate::ManifestError::ConversionFailure] is returned.
-    ///
-    /// If zstd decompression fails, the error
-    /// [`ZstdDecompressError`][crate::ManifestError::ZstdDecompressError] is returned.
-    ///
-    /// If writing to io stream fails, the error [`IoError`][crate::ManifestError::IoError] is
-    /// returned.
-    ///
-    /// # Examples
-    ///
-    /// See [downloading a file](index.html#example-downloading-a-file).
-    pub async fn download<W: Write + Send, U: IntoUrl + Send>(
-        &self,
-        mut writer: W,
-        bundle_url: U,
-    ) -> Result<()> {
-        let client = Client::new();
-        let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
+// impl File {
+//     /// Function to download the associated file contents.
+//     ///
+//     /// This is done by looping through all of the chunks of this file, and for each loop:
+//     /// - get the [bundle id](crate::entries::BundleEntry::id) it belongs to, and convert it to
+//     /// hexadecimal value with a fixed size of 16 (if the length is less than 16, zeros are
+//     /// padded to the left).
+//     /// - download the chunk from the url using the range header
+//     /// - [decompress the chunk][zstd::bulk::decompress]
+//     /// - write chunk.
+//     ///
+//     /// # Errors
+//     ///
+//     /// If downloading fails, the error [`ReqwestError`][crate::ManifestError::ReqwestError] is
+//     /// returned.
+//     ///
+//     /// If converting [`uncompressed_size`](crate::Header::uncompressed_size) to [`usize`] fails,
+//     /// the error [`ConversionFailure`][crate::ManifestError::ConversionFailure] is returned.
+//     ///
+//     /// If zstd decompression fails, the error
+//     /// [`ZstdDecompressError`][crate::ManifestError::ZstdDecompressError] is returned.
+//     ///
+//     /// If writing to io stream fails, the error [`IoError`][crate::ManifestError::IoError] is
+//     /// returned.
+//     ///
+//     /// # Examples
+//     ///
+//     /// See [downloading a file](index.html#example-downloading-a-file).
+//     pub async fn download<W: Write + Send, U: IntoUrl + Send>(
+//         &self,
+//         mut writer: W,
+//         bundle_url: U,
+//     ) -> Result<()> {
+//         let client = Client::new();
+//         let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
 
-        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
-            let from = *offset;
-            let to = from + compressed_size - 1;
+//         for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
+//             let from = *offset;
+//             let to = from + compressed_size - 1;
 
-            if !bundle_byte_map.contains_key(bundle_id) {
-                let response = client
-                    .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
-                    .send()
-                    .await?;
+//             if !bundle_byte_map.contains_key(bundle_id) {
+//                 let response = client
+//                     .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
+//                     .send()
+//                     .await?;
 
-                let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
-                bundle_byte_map.insert(bundle_id, bytes);
-            }
+//                 let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
+//                 bundle_byte_map.insert(bundle_id, bytes);
+//             }
 
-            debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
-            let uncompressed_size: usize = (*uncompressed_size).try_into()?;
-            debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+//             debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
+//             let uncompressed_size: usize = (*uncompressed_size).try_into()?;
+//             debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
 
-            // Get the bundle from the hashmap
-            let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
-            let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
+//             // Get the bundle from the hashmap
+//             let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
+//             let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
 
-            let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
-                Ok(result) => result,
-                Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-            };
+//             let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
+//                 Ok(result) => result,
+//                 Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
+//             };
 
-            // Write the relevant slice to the writer
-            writer.write_all(&decompressed_chunk)?;
-        }
+//             // Write the relevant slice to the writer
+//             writer.write_all(&decompressed_chunk)?;
+//         }
 
-        bundle_byte_map.clear();
-        Ok(())
-    }
-}
+//         bundle_byte_map.clear();
+//         Ok(())
+//     }
+// }
