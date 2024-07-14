@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 
+use futures::future::join_all;
+use log::debug;
 use reqwest::header;
 use reqwest::Client;
-use reqwest::Url;
+use reqwest::IntoUrl;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -164,33 +166,47 @@ impl File {
     /// # Examples
     ///
     /// See [downloading a file](index.html#example-downloading-a-file).
-    pub async fn download<W: Write + Send>(
-        client: &Client,
+    pub async fn download<W: Write + Send, U: IntoUrl + Send>(
+        &self,
         mut writer: W,
-        bundle_url: &Url,
-        chunks: &[(u64, u64, u64, u64)], // Assuming (bundle_id, offset, uncompressed_size, compressed_size)
+        bundle_url: U,
     ) -> Result<()> {
-        for (bundle_id, offset, uncompressed_size, compressed_size) in chunks {
-            let from = *offset;
-            let to = offset + compressed_size - 1;
+        let client = Client::new();
 
-            let url = bundle_url
-                .join(&format!("{:016X}.bundle", bundle_id))
-                .unwrap();
-            let response = client
-                .get(url)
-                .header(header::RANGE, format!("bytes={}-{}", from, to))
-                .send()
-                .await?;
+        let futures: Vec<_> = self
+            .chunks
+            .iter()
+            .map(|(bundle_id, offset, uncompressed_size, compressed_size)| {
+                let from = *offset;
+                let to = *offset + compressed_size - 1;
+                let url = format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id);
 
-            let decompressed_chunk =
-                match zstd::bulk::decompress(&response.bytes().await?, *uncompressed_size as usize)
                 {
-                    Ok(result) => result,
-                    Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-                };
+                    let value = client.clone();
+                    async move {
+                        let response = value
+                            .get(&url)
+                            .header(header::RANGE, format!("bytes={from}-{to}"))
+                            .send()
+                            .await
+                            .unwrap();
 
-            writer.write_all(&decompressed_chunk)?;
+                        let decompressed_chunk = zstd::bulk::decompress(
+                            &response.bytes().await.unwrap(),
+                            (*uncompressed_size).try_into().unwrap(),
+                        )?;
+                        Ok(decompressed_chunk)
+                    }
+                }
+            })
+            .collect();
+
+        let results = join_all(futures).await;
+        for result in results {
+            match result {
+                Ok(chunk) => writer.write_all(&chunk)?,
+                Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
+            }
         }
 
         Ok(())
