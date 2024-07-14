@@ -126,19 +126,19 @@ impl RiotManifest {
     }
 
     /// Example
-    pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str, output_path: &str) {
-        let mut bundle_urls: HashMap<String, (u32, u32)> = HashMap::new();
+    pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
+        let mut bundles: HashMap<String, (u32, u32)> = HashMap::new();
 
         for file in files {
             for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
                 let from = offset;
                 let to = offset + compressed_size - 1;
 
-                let bundle_url = format!("{}/{:016X}.bundle", bundle_cdn, bundle_id);
+                let bundle_id = format!("{:016X}.bundle", bundle_id);
 
                 // Update min and max
-                bundle_urls
-                    .entry(bundle_url)
+                bundles
+                    .entry(bundle_id)
                     .and_modify(|(min, max)| {
                         *min = cmp::min(*min, from);
                         *max = cmp::max(*max, to);
@@ -147,22 +147,28 @@ impl RiotManifest {
             }
         }
 
+        let temp_dir = "bundles_tmp";
+        fs::create_dir_all(temp_dir).unwrap();
+
         // Process the HashMap in parallel
         let available_parallelism = rayon::current_num_threads();
         println!("Using {} threads", available_parallelism);
-
-        bundle_urls.par_iter().for_each(|(bundle_url, (from, to))| {
+        bundles.par_iter().for_each(|(bundle_id, (from, to))| {
             let client = reqwest::blocking::Client::new();
+            let bundle_url = format!("{}/{}", bundle_cdn, bundle_id);
+
             let response = client
                 .get(bundle_url)
                 .header(RANGE, format!("bytes={from}-{to}"))
                 .send()
                 .unwrap();
 
-            let _bytes = response.bytes().unwrap();
+            let bundle_path = format!("{}/{}", temp_dir, bundle_id);
+            let bytes = response.bytes().unwrap();
+            fs::write(&bundle_path, &bytes).unwrap();
         });
 
-        //Start threads(cpu core count) to download all the bundles with range of min -> max
+        println!("ah shiet")
 
         //Run code here to parse the bundles into actual files
     }
