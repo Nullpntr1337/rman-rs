@@ -164,7 +164,6 @@ impl File {
     /// # Examples
     ///
     /// See [downloading a file](index.html#example-downloading-a-file).
-
     pub async fn download<W: Write + Send, U: IntoUrl + Send>(
         &self,
         mut writer: W,
@@ -173,37 +172,35 @@ impl File {
         let client = Client::new();
         let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
 
-        for (bundle_id, offset, _, compressed_size) in &self.chunks {
+        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
             let from = *offset;
             let to = from + compressed_size - 1;
 
-            if let Some(decompressed_chunk) = bundle_byte_map.get(bundle_id) {
-                // Write the relevant slice to the writer
-                writer.write_all(&decompressed_chunk[from as usize..to as usize + 1])?;
-            } else {
+            if !bundle_byte_map.contains_key(bundle_id) {
                 let response = client
                     .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
                     .send()
                     .await?;
 
-                debug!("Decompressing bundle {}", bundle_id);
-
-                let compressed_data = response.bytes().await?;
-
-                // Estimate capacity or use a predefined size
-                let estimated_capacity = compressed_data.len() * 3; // Example estimate
-
-                let decompressed_chunk =
-                    match zstd::bulk::decompress(&compressed_data, estimated_capacity) {
-                        Ok(result) => result,
-                        Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-                    };
-
-                bundle_byte_map.insert(bundle_id, decompressed_chunk.clone());
-
-                // Write the relevant slice to the writer
-                writer.write_all(&decompressed_chunk[from as usize..to as usize + 1])?;
+                let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
+                bundle_byte_map.insert(bundle_id, bytes);
             }
+
+            debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
+            let uncompressed_size: usize = (*uncompressed_size).try_into()?;
+            debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+
+            // Get the bundle from the hashmap
+            let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
+            let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
+
+            let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
+                Ok(result) => result,
+                Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
+            };
+
+            // Write the relevant slice to the writer
+            writer.write_all(&decompressed_chunk)?;
         }
 
         Ok(())
