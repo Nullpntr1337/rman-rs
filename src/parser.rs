@@ -122,7 +122,7 @@ impl RiotManifest {
     }
 
     /// Example
-    pub fn download_files() {
+    pub fn download_files(&self) {
         println!("hello")
     }
 }
