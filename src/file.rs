@@ -182,10 +182,8 @@ impl File {
             let bundle_path = format!("{}/{:016X}.bundle", temp_dir, bundle_id);
 
             let bundle_bytes = if Path::new(&bundle_path).exists() {
-                println!("We hit cache!");
                 fs::read(&bundle_path)?
             } else {
-                println!("We had to fetch!");
                 let response = client
                     .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
                     .send()
