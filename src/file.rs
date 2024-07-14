@@ -184,6 +184,7 @@ impl File {
 
                 let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
                 bundle_byte_map.insert(bundle_id, bytes);
+                println!("We had to fetch!")
             } else {
                 println!("We hit cache!");
             }
