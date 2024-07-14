@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use log::debug;
+use futures::stream::{self, StreamExt};
 use reqwest::header;
 use reqwest::Client;
 use reqwest::IntoUrl;
+use tokio::task;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -165,35 +166,55 @@ impl File {
     /// # Examples
     ///
     /// See [downloading a file](index.html#example-downloading-a-file).
-    pub async fn download<W: Write + Send, U: IntoUrl + Send>(
+    pub async fn download<W: Write + Send + 'static, U: IntoUrl + Send>(
         &self,
         mut writer: W,
         bundle_url: U,
     ) -> Result<()> {
         let client = Client::new();
+        let url = bundle_url.into_url()?;
+        let chunks = self.chunks.clone(); // Clone the chunks to avoid lifetime issues
 
-        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
-            let from = offset;
-            let to = offset + compressed_size - 1;
+        // Create a stream to process chunks concurrently
+        let chunk_futures =
+            chunks
+                .into_iter()
+                .map(|(bundle_id, offset, uncompressed_size, compressed_size)| {
+                    let client = client.clone();
+                    let url = url.clone();
 
-            let response = client
-                .get(format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str()))
-                .header(header::RANGE, format!("bytes={from}-{to}"))
-                .send()
-                .await?;
+                    task::spawn(async move {
+                        let from = offset;
+                        let to = offset + compressed_size - 1;
 
-            debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
-            let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
-            debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
+                        let response = client
+                            .get(format!("{}/{:016X}.bundle", url, bundle_id))
+                            .header(header::RANGE, format!("bytes={}-{}", from, to))
+                            .send()
+                            .await?;
 
-            let decompressed_chunk =
-                match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
-                    Ok(result) => result,
-                    Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-                };
+                        let uncompressed_size: usize = uncompressed_size.try_into()?;
+                        let compressed_bytes = response.bytes().await?;
+                        let decompressed_chunk =
+                            zstd::bulk::decompress(&compressed_bytes, uncompressed_size)?;
 
-            writer.write_all(&decompressed_chunk)?;
+                        Ok::<_, anyhow::Error>(decompressed_chunk)
+                    })
+                });
+
+        // Use a buffer to write the decompressed chunks
+        let mut buffer = vec![];
+
+        // Process the futures concurrently with a maximum of N concurrent tasks
+        const MAX_CONCURRENT: usize = 4;
+        let mut stream = stream::iter(chunk_futures).buffer_unordered(MAX_CONCURRENT);
+
+        while let Some(chunk_result) = stream.next().await {
+            let decompressed_chunk = chunk_result.unwrap().unwrap();
+            buffer.extend_from_slice(&decompressed_chunk);
         }
+
+        writer.write_all(&buffer)?;
 
         Ok(())
     }
