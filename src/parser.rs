@@ -151,7 +151,7 @@ impl RiotManifest {
 
         let available_parallelism = rayon::current_num_threads();
         println!(
-            "Using {} threads to download {} bundles",
+            "Using {} threads to download {} files",
             available_parallelism,
             bundles.len()
         );
@@ -179,7 +179,7 @@ impl RiotManifest {
                 });
 
             // Extract the file from the bundles
-            println!("Extracting {}...", lol_file.name);
+            println!("Decompressing {}...", lol_file.name);
             if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
                 fs::create_dir_all(parent_dir).unwrap();
             }
@@ -205,70 +205,5 @@ impl RiotManifest {
                 file.write_all(&decompressed_chunk).unwrap();
             }
         }
-
-        //Extract files from bundles
-        // for lol_file in files {
-        //     println!("Unpacking {}...", lol_file.name);
-        //     if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
-        //         fs::create_dir_all(parent_dir).unwrap();
-        //     }
-        //     for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
-        //         let bundle_file_name = format!("{:016X}.bundle", bundle_id);
-        //         let bundle_path = format!("{}/{}", temp_dir, bundle_file_name);
-
-        //         let (min, _max) = bundles.get(bundle_file_name.as_str()).unwrap();
-        //         let from = offset - min;
-        //         let to = offset + compressed_size - 1 - min;
-
-        //         let bundle_bytes = fs::read(&bundle_path).unwrap();
-        //         let uncompressed_size: usize = (uncompressed_size).try_into().unwrap();
-        //         let bundle_slice = &bundle_bytes[from as usize..to as usize + 1];
-
-        //         let decompressed_chunk =
-        //             zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
-
-        //         let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
-        //         file.write_all(&decompressed_chunk).unwrap();
-        //     }
-        // }
     }
-
-    // pub fn download_files(files: Vec<File>, bundle_cdn: String, output: String) -> Result<()> {
-    //     let client = Client::new();
-    //     let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
-
-    //     for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
-    //         let from = *offset;
-    //         let to = from + compressed_size - 1;
-
-    //         if !bundle_byte_map.contains_key(bundle_id) {
-    //             let response = client
-    //                 .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
-    //                 .send()
-    //                 .await?;
-
-    //             let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
-    //             bundle_byte_map.insert(bundle_id, bytes);
-    //         }
-
-    //         debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
-    //         let uncompressed_size: usize = (*uncompressed_size).try_into()?;
-    //         debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
-
-    //         // Get the bundle from the hashmap
-    //         let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
-    //         let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
-
-    //         let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
-    //             Ok(result) => result,
-    //             Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-    //         };
-
-    //         // Write the relevant slice to the writer
-    //         writer.write_all(&decompressed_chunk)?;
-    //     }
-
-    //     bundle_byte_map.clear();
-    //     Ok(())
-    // }
 }
