@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use futures::future::join_all;
+use log::debug;
 use reqwest::header;
 use reqwest::Client;
 use reqwest::IntoUrl;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
+use stopwatch::Stopwatch;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -173,44 +172,30 @@ impl File {
         bundle_url: U,
     ) -> Result<()> {
         let client = Client::new();
-        let semaphore = Arc::new(Semaphore::new(10)); // Limit concurrent requests
 
-        let futures: Vec<_> = self
-            .chunks
-            .iter()
-            .map(|(bundle_id, offset, uncompressed_size, compressed_size)| {
-                let semaphore = Arc::clone(&semaphore);
-                let from = *offset;
-                let to = *offset + compressed_size - 1;
-                let url = format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id);
+        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
+            let from = offset;
+            let to = offset + compressed_size - 1;
 
-                {
-                    let value = client.clone();
-                    async move {
-                        let _permit = semaphore.acquire().await.unwrap();
-                        let response = value
-                            .get(&url)
-                            .header(header::RANGE, format!("bytes={from}-{to}"))
-                            .send()
-                            .await
-                            .unwrap();
+            let sw = Stopwatch::start_new();
+            let response = client
+                .get(format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str()))
+                .header(header::RANGE, format!("bytes={from}-{to}"))
+                .send()
+                .await?;
+            println!("Took {}ms to fetch response", sw.elapsed_ms());
 
-                        let decompressed_chunk = zstd::bulk::decompress(
-                            &response.bytes().await.unwrap(),
-                            (*uncompressed_size).try_into().unwrap(),
-                        )?;
-                        Ok(decompressed_chunk)
-                    }
-                }
-            })
-            .collect();
+            debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
+            let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
+            debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
 
-        let results = join_all(futures).await;
-        for result in results {
-            match result {
-                Ok(chunk) => writer.write_all(&chunk)?,
-                Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
-            }
+            let decompressed_chunk =
+                match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
+                    Ok(result) => result,
+                    Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
+                };
+
+            writer.write_all(&decompressed_chunk)?;
         }
 
         Ok(())
