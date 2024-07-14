@@ -161,10 +161,10 @@ impl RiotManifest {
             // Download all needed bundles for file into memory
             let bytes_map = Arc::new(Mutex::new(HashMap::new()));
             let bundles_for_file = bundles.get(&lol_file.id).unwrap();
+            let client = reqwest::blocking::Client::new();
             bundles_for_file
                 .par_iter()
                 .for_each(|(bundle_file_name, (from, to))| {
-                    let client = reqwest::blocking::Client::new();
                     let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
 
                     let response = client
