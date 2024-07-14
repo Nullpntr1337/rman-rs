@@ -187,7 +187,7 @@ impl File {
             } else {
                 println!("We had to fetch!");
                 let response = client
-                    .get(format!("{}/{}.bundle", bundle_url.as_str(), bundle_id))
+                    .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
                     .send()
                     .await?;
 
