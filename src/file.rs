@@ -177,7 +177,7 @@ impl File {
             let from = offset;
             let to = offset + compressed_size - 1;
 
-            let sw = Stopwatch::start_new();
+            let mut sw = Stopwatch::start_new();
             let response = client
                 .get(format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str()))
                 .header(header::RANGE, format!("bytes={from}-{to}"))
@@ -189,13 +189,17 @@ impl File {
             let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
             debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
 
+            sw.restart();
             let decompressed_chunk =
                 match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
                     Ok(result) => result,
                     Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
                 };
+            println!("Took {}ms to fetch decompress", sw.elapsed_ms());
 
+            sw.restart();
             writer.write_all(&decompressed_chunk)?;
+            println!("Took {}ms to write to disk", sw.elapsed_ms());
         }
 
         Ok(())
