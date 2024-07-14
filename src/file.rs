@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
+use std::path::Path;
 
 use log::debug;
 use reqwest::Client;
@@ -170,34 +172,35 @@ impl File {
         bundle_url: U,
     ) -> Result<()> {
         let client = Client::new();
-        let mut bundle_byte_map: HashMap<&i64, Vec<u8>> = HashMap::new();
+        let temp_dir = "temp_bundles"; // Specify your temp directory
+        fs::create_dir_all(temp_dir)?;
 
         for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
             let from = *offset;
             let to = from + compressed_size - 1;
 
-            if !bundle_byte_map.contains_key(bundle_id) {
+            let bundle_path = format!("{}/{:016X}.bundle", temp_dir, bundle_id);
+
+            let bundle_bytes = if Path::new(&bundle_path).exists() {
+                println!("We hit cache!");
+                fs::read(&bundle_path)?
+            } else {
+                println!("We had to fetch!");
                 let response = client
-                    .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
+                    .get(format!("{}/{}.bundle", bundle_url.as_str(), bundle_id))
                     .send()
                     .await?;
 
-                let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
-                bundle_byte_map.insert(bundle_id, bytes);
-                println!("We had to fetch!")
-            } else {
-                println!("We hit cache!");
-            }
+                let bytes = response.bytes().await?.to_vec();
+                fs::write(&bundle_path, &bytes)?; // Save to temp folder
+                bytes
+            };
 
-            debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
             let uncompressed_size: usize = (*uncompressed_size).try_into()?;
-            debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
 
-            // Get the bundle from the hashmap
-            let bundle_data = bundle_byte_map.get(bundle_id).unwrap();
-            let bundle_bytes = &bundle_data[from as usize..to as usize + 1];
+            let bundle_slice = &bundle_bytes[from as usize..to as usize + 1];
 
-            let decompressed_chunk = match zstd::bulk::decompress(bundle_bytes, uncompressed_size) {
+            let decompressed_chunk = match zstd::bulk::decompress(bundle_slice, uncompressed_size) {
                 Ok(result) => result,
                 Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
             };
@@ -206,7 +209,6 @@ impl File {
             writer.write_all(&decompressed_chunk)?;
         }
 
-        bundle_byte_map.clear();
         Ok(())
     }
 }
