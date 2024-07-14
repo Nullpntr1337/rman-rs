@@ -148,7 +148,7 @@ impl RiotManifest {
             }
         }
 
-        println!("Bundles needed min -> {:#?}", bundle_urls_min);
+        println!("Bundles needed max -> {:#?}", bundle_urls_max);
     }
 
     // pub fn download_files(files: Vec<File>, bundle_cdn: String, output: String) -> Result<()> {
