@@ -129,7 +129,7 @@ impl RiotManifest {
     pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
         let mut bundles: HashMap<String, (u32, u32)> = HashMap::new();
 
-        for file in files.clone() {
+        for file in files {
             for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
                 let from = offset;
                 let to = offset + compressed_size - 1;
@@ -150,48 +150,23 @@ impl RiotManifest {
         let temp_dir = "bundles_tmp";
         fs::create_dir_all(temp_dir).unwrap();
 
+        // Process the HashMap in parallel
         let available_parallelism = rayon::current_num_threads();
         println!("Using {} threads", available_parallelism);
-        for file in files {
-            println!("Downloading -> {}", file.name);
-            file.chunks.par_iter().for_each(
-                |(bundle_id, _offset, _uncompressed_size, _compressed_size)| {
-                    let client = reqwest::blocking::Client::new();
-                    let bundle_id_file = format!("{:016X}.bundle", bundle_id);
-                    let bundle_url = format!("{}/{}", bundle_cdn, bundle_id_file);
+        bundles.par_iter().for_each(|(bundle_id, (from, to))| {
+            let client = reqwest::blocking::Client::new();
+            let bundle_url = format!("{}/{}", bundle_cdn, bundle_id);
 
-                    let (from, to) = bundles.get(bundle_id_file.as_str()).unwrap();
+            let response = client
+                .get(bundle_url)
+                .header(RANGE, format!("bytes={from}-{to}"))
+                .send()
+                .unwrap();
 
-                    let response = client
-                        .get(bundle_url)
-                        .header(RANGE, format!("bytes={from}-{to}"))
-                        .send()
-                        .unwrap();
-
-                    let bundle_path = format!("{}/{}", temp_dir, bundle_id);
-                    let bytes = response.bytes().unwrap();
-                    fs::write(&bundle_path, &bytes).unwrap();
-                },
-            );
-        }
-
-        // Process the HashMap in parallel
-        // let available_parallelism = rayon::current_num_threads();
-        // println!("Using {} threads", available_parallelism);
-        // bundles.par_iter().for_each(|(bundle_id, (from, to))| {
-        //     let client = reqwest::blocking::Client::new();
-        //     let bundle_url = format!("{}/{}", bundle_cdn, bundle_id);
-
-        //     let response = client
-        //         .get(bundle_url)
-        //         .header(RANGE, format!("bytes={from}-{to}"))
-        //         .send()
-        //         .unwrap();
-
-        //     let bundle_path = format!("{}/{}", temp_dir, bundle_id);
-        //     let bytes = response.bytes().unwrap();
-        //     fs::write(&bundle_path, &bytes).unwrap();
-        // });
+            let bundle_path = format!("{}/{}", temp_dir, bundle_id);
+            let bytes = response.bytes().unwrap();
+            fs::write(&bundle_path, &bytes).unwrap();
+        });
 
         println!("ah shiet")
 
