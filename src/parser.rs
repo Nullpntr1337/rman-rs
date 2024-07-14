@@ -136,11 +136,11 @@ impl RiotManifest {
 
                 let new_min = match bundle_urls_min.get(bundle_url.as_str()) {
                     Some(min) => cmp::min(min, &from),
-                    None => &0,
+                    None => &from,
                 };
                 let new_max = match bundle_urls_max.get(bundle_url.as_str()) {
                     Some(max) => cmp::max(max, &to),
-                    None => &0,
+                    None => &to,
                 };
 
                 bundle_urls_min.insert(bundle_url.clone(), *new_min);
