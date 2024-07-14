@@ -178,6 +178,12 @@ impl RiotManifest {
                             Ok(response) => match response.bytes() {
                                 Ok(bytes) => {
                                     let mut bytes_map = bytes_map.lock().unwrap();
+                                    print!(
+                                        "Saved {} bytes for range {}->{}",
+                                        bytes.len(),
+                                        from,
+                                        to
+                                    );
                                     bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
                                     break Ok(());
                                 }
