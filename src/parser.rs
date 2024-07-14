@@ -120,4 +120,9 @@ impl RiotManifest {
 
         Ok(Self { header, data })
     }
+
+    /// Example
+    pub fn download_files() {
+        println!("hello")
+    }
 }
