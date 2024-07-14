@@ -7,9 +7,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use reqwest::header::RANGE;
 
 use std::collections::HashMap;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::thread::{self, available_parallelism};
 use std::{cmp, fs};
 
 use log::debug;
@@ -129,16 +128,16 @@ impl RiotManifest {
     pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
         let mut bundles: HashMap<String, (u32, u32)> = HashMap::new();
 
-        for file in files {
+        for file in files.clone() {
             for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
                 let from = offset;
                 let to = offset + compressed_size - 1;
 
-                let bundle_id = format!("{:016X}.bundle", bundle_id);
+                let bundle_file_name = format!("{:016X}.bundle", bundle_id);
 
                 // Update min and max
                 bundles
-                    .entry(bundle_id)
+                    .entry(bundle_file_name)
                     .and_modify(|(min, max)| {
                         *min = cmp::min(*min, from);
                         *max = cmp::max(*max, to);
@@ -152,25 +151,55 @@ impl RiotManifest {
 
         // Process the HashMap in parallel
         let available_parallelism = rayon::current_num_threads();
-        println!("Using {} threads", available_parallelism);
-        bundles.par_iter().for_each(|(bundle_id, (from, to))| {
-            let client = reqwest::blocking::Client::new();
-            let bundle_url = format!("{}/{}", bundle_cdn, bundle_id);
+        println!(
+            "Using {} threads to download {} bundles",
+            available_parallelism,
+            bundles.len()
+        );
+        bundles
+            .par_iter()
+            .for_each(|(bundle_file_name, (from, to))| {
+                let client = reqwest::blocking::Client::new();
+                let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
 
-            let response = client
-                .get(bundle_url)
-                .header(RANGE, format!("bytes={from}-{to}"))
-                .send()
-                .unwrap();
+                let response = client
+                    .get(bundle_url)
+                    .header(RANGE, format!("bytes={from}-{to}"))
+                    .send()
+                    .unwrap();
 
-            let bundle_path = format!("{}/{}", temp_dir, bundle_id);
-            let bytes = response.bytes().unwrap();
-            fs::write(&bundle_path, &bytes).unwrap();
-        });
+                let bundle_path = format!("{}/{}", temp_dir, bundle_file_name);
+                let bytes = response.bytes().unwrap();
+                fs::write(&bundle_path, &bytes).unwrap();
+            });
 
-        println!("ah shiet")
+        //Extract files from bundles
+        for lol_file in files {
+            println!("Unpacking {}...", lol_file.name);
+            for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
+                let bundle_file_name = format!("{:016X}.bundle", bundle_id);
+                let bundle_path = format!("{}/{}", temp_dir, bundle_file_name);
 
-        //Run code here to parse the bundles into actual files
+                let (min, _max) = bundles.get(bundle_file_name.as_str()).unwrap();
+                let from = offset - min;
+                let to = offset + compressed_size - 1 - min;
+
+                let bundle_bytes = fs::read(&bundle_path).unwrap();
+                let uncompressed_size: usize = (uncompressed_size).try_into().unwrap();
+                let bundle_slice = &bundle_bytes[from as usize..to as usize + 1];
+
+                let decompressed_chunk =
+                    zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
+
+                if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
+                    fs::create_dir_all(parent_dir).unwrap();
+                    println!("Directory created: {:?}", parent_dir);
+                }
+
+                let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
+                file.write_all(&decompressed_chunk).unwrap();
+            }
+        }
     }
 
     // pub fn download_files(files: Vec<File>, bundle_cdn: String, output: String) -> Result<()> {
