@@ -5,7 +5,6 @@ use log::debug;
 use reqwest::header;
 use reqwest::Client;
 use reqwest::IntoUrl;
-use stopwatch::Stopwatch;
 
 use crate::entries::FileEntry;
 use crate::{ManifestError, Result};
@@ -173,42 +172,58 @@ impl File {
     ) -> Result<()> {
         let client = Client::new();
 
-        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
-            let from = offset;
-            let to = offset + compressed_size - 1;
+        // Group chunks by bundle ID
+        let mut bundles: HashMap<u64, Vec<(usize, usize, usize)>> = HashMap::new();
 
-            let mut sw = Stopwatch::start_new();
-            let bundle_url = format!("{}/{bundle_id:016X}.bundle", bundle_url.as_str());
+        for (bundle_id, offset, uncompressed_size, compressed_size) in &self.chunks {
+            bundles
+                .entry((*bundle_id).try_into().unwrap())
+                .or_default()
+                .push((
+                    (*offset).try_into().unwrap(),
+                    (*uncompressed_size).try_into().unwrap(),
+                    (*compressed_size).try_into().unwrap(),
+                ));
+        }
+
+        // Process each bundle
+        for (bundle_id, chunks) in bundles {
+            let min_offset = chunks.iter().map(|(offset, _, _)| *offset).min().unwrap();
+            let max_offset = chunks
+                .iter()
+                .map(|(offset, _, compressed_size)| *offset + compressed_size)
+                .max()
+                .unwrap();
+
             let response = client
-                .get(bundle_url.clone())
-                .header(header::RANGE, format!("bytes={from}-{to}"))
+                .get(format!("{}/{:016X}.bundle", bundle_url.as_str(), bundle_id))
+                .header(
+                    header::RANGE,
+                    format!("bytes={}-{}", min_offset, max_offset - 1),
+                )
                 .send()
                 .await?;
-            println!(
-                "Took {}ms to fetch response ({}-{}) from {}",
-                sw.elapsed_ms(),
-                from,
-                to,
-                bundle_url
-            );
 
-            sw.restart();
             debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
-            let uncompressed_size: usize = uncompressed_size.to_owned().try_into()?;
+            let total_uncompressed_size: usize = chunks
+                .iter()
+                .map(|(_, uncompressed_size, _)| *uncompressed_size)
+                .sum();
             debug!("Successfully converted \"uncompressed_size\" into \"usize\".");
-            println!("Took {}ms to convert un_size to usize", sw.elapsed_ms());
 
-            sw.restart();
-            let decompressed_chunk =
-                match zstd::bulk::decompress(&response.bytes().await?, uncompressed_size) {
+            let decompressed_data =
+                match zstd::bulk::decompress(&response.bytes().await?, total_uncompressed_size) {
                     Ok(result) => result,
                     Err(error) => return Err(ManifestError::ZstdDecompressError(error)),
                 };
-            println!("Took {}ms to fetch decompress", sw.elapsed_ms());
 
-            sw.restart();
-            writer.write_all(&decompressed_chunk)?;
-            println!("Took {}ms to write to disk", sw.elapsed_ms());
+            // Write individual parts to the writer
+            let mut current_offset = 0;
+            for (_offset, uncompressed_size, _) in chunks {
+                let chunk = &decompressed_data[current_offset..current_offset + uncompressed_size];
+                writer.write_all(chunk)?;
+                current_offset += uncompressed_size;
+            }
         }
 
         Ok(())
