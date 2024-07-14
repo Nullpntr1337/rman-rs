@@ -190,6 +190,9 @@ impl RiotManifest {
         //Extract files from bundles
         for lol_file in files {
             println!("Unpacking {}...", lol_file.name);
+            if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
+                fs::create_dir_all(parent_dir).unwrap();
+            }
             for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
                 let bundle_file_name = format!("{:016X}.bundle", bundle_id);
                 let bundle_path = format!("{}/{}", temp_dir, bundle_file_name);
@@ -204,11 +207,6 @@ impl RiotManifest {
 
                 let decompressed_chunk =
                     zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
-
-                if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
-                    fs::create_dir_all(parent_dir).unwrap();
-                    println!("Directory created: {:?}", parent_dir);
-                }
 
                 let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
                 file.write_all(&decompressed_chunk).unwrap();
