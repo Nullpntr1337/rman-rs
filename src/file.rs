@@ -184,6 +184,8 @@ impl File {
 
                 let bytes = response.bytes().await?.to_vec(); // Store the bytes as a Vec<u8>
                 bundle_byte_map.insert(bundle_id, bytes);
+            } else {
+                println!("We hit cache!");
             }
 
             debug!("Attempting to convert \"uncompressed_size\" into \"usize\".");
@@ -203,6 +205,7 @@ impl File {
             writer.write_all(&decompressed_chunk)?;
         }
 
+        bundle_byte_map.clear();
         Ok(())
     }
 }
