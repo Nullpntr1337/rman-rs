@@ -167,15 +167,39 @@ impl RiotManifest {
                 .for_each(|(bundle_file_name, (from, to))| {
                     let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
 
-                    let response = client
-                        .get(bundle_url.clone())
-                        .header(RANGE, format!("bytes={from}-{to}"))
-                        .send()
-                        .unwrap();
-                    let bytes = response.bytes().unwrap();
+                    let mut attempt = 0;
+                    let result = loop {
+                        attempt += 1;
+                        match client
+                            .get(bundle_url.clone())
+                            .header(RANGE, format!("bytes={from}-{to}"))
+                            .send()
+                        {
+                            Ok(response) => match response.bytes() {
+                                Ok(bytes) => {
+                                    let mut bytes_map = bytes_map.lock().unwrap();
+                                    bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
+                                    break Ok(());
+                                }
+                                Err(e) => {
+                                    eprintln!("Attempt {}/3 failed: {}", attempt, e);
+                                    if attempt >= 3 {
+                                        break Err(e);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Attempt {}/3 failed: {}", attempt, e);
+                                if attempt >= 3 {
+                                    break Err(e);
+                                }
+                            }
+                        }
+                    };
 
-                    let mut bytes_map = bytes_map.lock().unwrap();
-                    bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
+                    if result.is_err() {
+                        eprintln!("Failed to fetch {} after 3 attempts", bundle_file_name);
+                    }
                 });
 
             // Extract the file from the bundles
