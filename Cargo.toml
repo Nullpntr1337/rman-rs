@@ -14,6 +14,7 @@ anyhow = "1.0.86"
 byteorder = "1.4.3"
 flatbuffers = "24.3.25"
 futures = "0.3.30"
+indicatif = "0.17.8"
 log = "0.4.20"
 rayon = "1.10.0"
 reqwest = { version = "0.12.5", default-features = false, features = [

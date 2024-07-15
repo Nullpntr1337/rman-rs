@@ -2,6 +2,7 @@ pub mod header;
 pub mod manifest;
 
 use header::Header;
+use indicatif::{ProgressBar, ProgressStyle};
 use manifest::ManifestData;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use reqwest::header::RANGE;
@@ -154,8 +155,15 @@ impl RiotManifest {
             bundles.len()
         );
 
+        let pb = ProgressBar::new(files.len() as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .expect("Error: Failed to set style for PB")
+            .progress_chars("#>-"));
+
         for file in files {
-            println!("Downloading {}...", file.name);
+            pb.set_message(file.name.clone());
+            pb.inc(1);
 
             let bytes_map = Arc::new(Mutex::new(HashMap::new()));
             let bundles_for_file = bundles
@@ -175,6 +183,8 @@ impl RiotManifest {
 
             Self::decompress_and_write_file(&file, &bytes_map, bundles_for_file);
         }
+
+        pb.finish_with_message("Download complete");
     }
 
     fn prepare_bundles(files: &[File]) -> HashMap<i64, HashMap<String, (u32, u32)>> {
