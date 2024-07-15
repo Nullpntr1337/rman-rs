@@ -173,7 +173,6 @@ impl RiotManifest {
 
             Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn);
 
-            println!("Decompressing {}...", file.name);
             Self::create_parent_dir(&file.path);
 
             let bytes_map = Arc::try_unwrap(bytes_map)
