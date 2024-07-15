@@ -125,8 +125,25 @@ impl RiotManifest {
         Ok(Self { header, data })
     }
 
-    /// Example
+    /// Downloads and processes a list of files.
+    ///
+    /// # Arguments
+    ///
+    /// * `files` - A vector of `File` structs representing the files to download.
+    /// * `bundle_cdn` - A string slice representing the URL of the bundle CDN.
+    ///
     /// # Panics
+    ///
+    /// This function will panic if:
+    ///
+    /// * The required bundle for a file is not found in the `bundles` map.
+    /// * It fails to unwrap the `Arc` containing the bytes map.
+    /// * It fails to obtain a lock on the `Mutex` containing the bytes map.
+    /// * It fails to create the necessary parent directories for a file.
+    /// * It fails to create a file for writing the decompressed data.
+    /// * It fails to convert the size of the uncompressed data chunk.
+    /// * It fails to decompress the data chunk.
+    /// * It fails to write the decompressed data chunk to a file.
     pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
         let bundles = Self::prepare_bundles(&files);
 
@@ -141,7 +158,9 @@ impl RiotManifest {
             println!("Downloading {}...", file.name);
 
             let bytes_map = Arc::new(Mutex::new(HashMap::new()));
-            let bundles_for_file = bundles.get(&file.id).expect("Bundle was not found");
+            let bundles_for_file = bundles
+                .get(&file.id)
+                .expect("Error: Bundle was not found for the given file ID");
             let client = reqwest::blocking::Client::new();
 
             Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn);
@@ -150,9 +169,9 @@ impl RiotManifest {
             Self::create_parent_dir(&file.path);
 
             let bytes_map = Arc::try_unwrap(bytes_map)
-                .expect("Failed to unwrap Arc")
+                .expect("Error: Failed to unwrap Arc containing bytes map")
                 .into_inner()
-                .expect("Failed to get Mutex guard");
+                .expect("Error: Failed to obtain Mutex guard for bytes map");
 
             Self::decompress_and_write_file(&file, &bytes_map, bundles_for_file);
         }
@@ -206,21 +225,21 @@ impl RiotManifest {
                             if bytes.len() == expected_length {
                                 bytes_map
                                     .lock()
-                                    .expect("Failed to get bytes_map")
+                                    .expect("Error: Failed to lock bytes_map for insertion")
                                     .insert(bundle_file_name.clone(), bytes.to_vec());
                                 break;
                             }
                             eprintln!(
-                                "Byte length mismatch for {}: expected {}, got {}",
+                                "Error: Byte length mismatch for {}: expected {}, got {}",
                                 bundle_file_name,
                                 expected_length,
                                 bytes.len()
                             );
                         }
                         Err(e) => {
-                            eprintln!("Attempt {attempt}/3 failed: {e}");
+                            eprintln!("Error: Attempt {attempt}/3 to fetch {bundle_file_name} failed: {e}");
                             if attempt == 3 {
-                                eprintln!("Failed to fetch {bundle_file_name} after 3 attempts");
+                                eprintln!("Error: Failed to fetch {bundle_file_name} after 3 attempts");
                             }
                         }
                     }
@@ -230,7 +249,8 @@ impl RiotManifest {
 
     fn create_parent_dir(file_path: &str) {
         if let Some(parent_dir) = Path::new(file_path).parent() {
-            fs::create_dir_all(parent_dir).expect("Failed to create directories");
+            fs::create_dir_all(parent_dir)
+                .expect("Error: Failed to create parent directories for the file path");
         }
     }
 
@@ -239,29 +259,30 @@ impl RiotManifest {
         bytes_map: &HashMap<String, Vec<u8>>,
         bundles_for_file: &HashMap<String, (u32, u32)>,
     ) {
-        let mut file = fs::File::create(&lol_file.path).expect("Failed to create file");
+        let mut file = fs::File::create(&lol_file.path)
+            .expect("Error: Failed to create file for decompressed data");
 
         for (bundle_id, offset, uncompressed_size, compressed_size) in &lol_file.chunks {
             let bundle_file_name = format!("{bundle_id:016X}.bundle");
             let (min, _max) = bundles_for_file
                 .get(&bundle_file_name)
-                .expect("Bundle min not found");
+                .expect("Error: Bundle min value not found in the bundles map");
             let from = offset - min;
             let to = offset + compressed_size - 1 - min;
 
             let bundle_bytes = bytes_map
                 .get(&bundle_file_name)
-                .expect("Bundle bytes not found");
+                .expect("Error: Bundle bytes not found in the bytes map");
             let uncompressed_size: usize = (*uncompressed_size)
                 .try_into()
-                .expect("Failed to convert size");
+                .expect("Error: Failed to convert uncompressed size to usize");
             let bundle_slice = &bundle_bytes[(from as usize)..=(to as usize)];
 
             let decompressed_chunk = zstd::bulk::decompress(bundle_slice, uncompressed_size)
-                .expect("Failed to decompress data");
+                .expect("Error: Failed to decompress the data chunk");
 
             file.write_all(&decompressed_chunk)
-                .expect("Failed to write decompressed chunk to file");
+                .expect("Error: Failed to write decompressed chunk to file");
         }
     }
 }
