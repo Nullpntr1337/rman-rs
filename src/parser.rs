@@ -126,7 +126,39 @@ impl RiotManifest {
     }
 
     /// Example
+    /// # Panics
     pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
+        let bundles = Self::prepare_bundles(&files);
+
+        let available_parallelism = rayon::current_num_threads();
+        println!(
+            "Using {} threads to download {} files",
+            available_parallelism,
+            bundles.len()
+        );
+
+        for file in files {
+            println!("Downloading {}...", file.name);
+
+            let bytes_map = Arc::new(Mutex::new(HashMap::new()));
+            let bundles_for_file = bundles.get(&file.id).expect("Bundle was not found");
+            let client = reqwest::blocking::Client::new();
+
+            Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn);
+
+            println!("Decompressing {}...", file.name);
+            Self::create_parent_dir(&file.path);
+
+            let bytes_map = Arc::try_unwrap(bytes_map)
+                .expect("Failed to unwrap Arc")
+                .into_inner()
+                .expect("Failed to get Mutex guard");
+
+            Self::decompress_and_write_file(&file, &bytes_map, bundles_for_file);
+        }
+    }
+
+    fn prepare_bundles(files: &Vec<File>) -> HashMap<i64, HashMap<String, (u32, u32)>> {
         let mut bundles: HashMap<i64, HashMap<String, (u32, u32)>> = HashMap::new();
 
         for file in files.clone() {
@@ -134,10 +166,8 @@ impl RiotManifest {
             for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
                 let from = offset;
                 let to = offset + compressed_size - 1;
+                let bundle_file_name = format!("{bundle_id:016X}.bundle");
 
-                let bundle_file_name = format!("{:016X}.bundle", bundle_id);
-
-                // Update min and max
                 bundles_min_max
                     .entry(bundle_file_name)
                     .and_modify(|(min, max)| {
@@ -149,100 +179,88 @@ impl RiotManifest {
             bundles.insert(file.id, bundles_min_max);
         }
 
-        let available_parallelism = rayon::current_num_threads();
-        println!(
-            "Using {} threads to download {} files",
-            available_parallelism,
-            bundles.len()
-        );
-        for lol_file in files {
-            println!("Downloading {}...", lol_file.name);
+        bundles
+    }
 
-            // Download all needed bundles for file into memory
-            let bytes_map = Arc::new(Mutex::new(HashMap::new()));
-            let bundles_for_file = bundles.get(&lol_file.id).unwrap();
-            let client = reqwest::blocking::Client::new();
-            bundles_for_file
-                .par_iter()
-                .for_each(|(bundle_file_name, (from, to))| {
-                    let bundle_url = format!("{}/{}", bundle_cdn, bundle_file_name);
-                    let expected_length = (to - from + 1) as usize; // Calculate expected byte length
+    fn download_bundles(
+        client: &reqwest::blocking::Client,
+        bytes_map: &Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        bundles_for_file: &HashMap<String, (u32, u32)>,
+        bundle_cdn: &str,
+    ) {
+        bundles_for_file
+            .par_iter()
+            .for_each(|(bundle_file_name, (from, to))| {
+                let bundle_url = format!("{bundle_cdn}/{bundle_file_name}");
+                let expected_length = (to - from + 1) as usize;
 
-                    let mut attempt = 0;
-                    let result = loop {
-                        attempt += 1;
-                        match client
-                            .get(bundle_url.clone())
-                            .header(RANGE, format!("bytes={from}-{to}"))
-                            .send()
-                        {
-                            Ok(response) => match response.bytes() {
-                                Ok(bytes) => {
-                                    // Verify byte length
-                                    if bytes.len() != expected_length {
-                                        eprintln!(
-                                            "Byte length mismatch for {}: expected {}, got {}",
-                                            bundle_file_name,
-                                            expected_length,
-                                            bytes.len()
-                                        );
-                                        if attempt >= 3 {
-                                            //TODO: fix
-                                            break Ok(());
-                                        }
-                                    } else {
-                                        let mut bytes_map = bytes_map.lock().unwrap();
-                                        bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
-                                        break Ok(());
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("Attempt {}/3 failed: {}", attempt, e);
-                                    if attempt >= 3 {
-                                        break Err(e);
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Attempt {}/3 failed: {}", attempt, e);
-                                if attempt >= 3 {
-                                    break Err(e);
-                                }
+                for attempt in 1..=3 {
+                    let result = client
+                        .get(bundle_url.clone())
+                        .header(RANGE, format!("bytes={from}-{to}"))
+                        .send()
+                        .and_then(|response| response.bytes());
+
+                    match result {
+                        Ok(bytes) => {
+                            if bytes.len() != expected_length {
+                                eprintln!(
+                                    "Byte length mismatch for {}: expected {}, got {}",
+                                    bundle_file_name,
+                                    expected_length,
+                                    bytes.len()
+                                );
+                            } else {
+                                let mut bytes_map = bytes_map.lock().unwrap();
+                                bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
+                                break;
                             }
                         }
-                    };
-
-                    if result.is_err() {
-                        eprintln!("Failed to fetch {} after 3 attempts", bundle_file_name);
+                        Err(e) => {
+                            eprintln!("Attempt {}/3 failed: {}", attempt, e);
+                            if attempt == 3 {
+                                eprintln!("Failed to fetch {} after 3 attempts", bundle_file_name);
+                            }
+                        }
                     }
-                });
+                }
+            });
+    }
 
-            // Extract the file from the bundles
-            println!("Decompressing {}...", lol_file.name);
-            if let Some(parent_dir) = Path::new(lol_file.path.as_str()).parent() {
-                fs::create_dir_all(parent_dir).unwrap();
-            }
+    fn create_parent_dir(file_path: &str) {
+        if let Some(parent_dir) = Path::new(file_path).parent() {
+            fs::create_dir_all(parent_dir).expect("Failed to create directories");
+        }
+    }
 
-            let bytes_map: HashMap<String, Vec<u8>> =
-                Arc::try_unwrap(bytes_map).unwrap().into_inner().unwrap();
+    fn decompress_and_write_file(
+        lol_file: &File,
+        bytes_map: &HashMap<String, Vec<u8>>,
+        bundles_for_file: &HashMap<String, (u32, u32)>,
+    ) {
+        let mut file = fs::File::create(&lol_file.path).expect("Failed to create file");
 
-            let mut file = fs::File::create(lol_file.path.as_str()).unwrap();
-            for (bundle_id, offset, uncompressed_size, compressed_size) in lol_file.chunks {
-                let bundle_file_name = format!("{:016X}.bundle", bundle_id);
+        for (bundle_id, offset, uncompressed_size, compressed_size) in &lol_file.chunks {
+            let bundle_file_name = format!("{bundle_id:016X}.bundle");
+            let (min, _max) = bundles_for_file
+                .get(&bundle_file_name)
+                .expect("Bundle min not found");
+            let from = offset - min;
+            let to = offset + compressed_size - 1 - min;
 
-                let (min, _max) = bundles_for_file.get(bundle_file_name.as_str()).unwrap();
-                let from = offset - min;
-                let to = offset + compressed_size - 1 - min;
+            let bundle_bytes = bytes_map
+                .get(&bundle_file_name)
+                .expect("Bundle bytes not found");
+            let uncompressed_size: usize = (*uncompressed_size)
+                .try_into()
+                .expect("Failed to convert size");
+            let bundle_slice = &bundle_bytes[(from as usize)..=(to as usize)];
 
-                let bundle_bytes = bytes_map.get(bundle_file_name.as_str()).unwrap();
-                let uncompressed_size: usize = (uncompressed_size).try_into().unwrap();
-                let bundle_slice = &bundle_bytes[from as usize..to as usize + 1];
+            let decompressed_chunk = zstd::bulk::decompress(bundle_slice, uncompressed_size)
+                .expect("Failed to decompress data");
 
-                let decompressed_chunk =
-                    zstd::bulk::decompress(bundle_slice, uncompressed_size).unwrap();
-
-                file.write_all(&decompressed_chunk).unwrap();
-            }
+            file.write_all(&decompressed_chunk)
+                .expect("Failed to write decompressed chunk to file");
         }
     }
 }
