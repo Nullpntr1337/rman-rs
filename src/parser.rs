@@ -158,12 +158,12 @@ impl RiotManifest {
         }
     }
 
-    fn prepare_bundles(files: &Vec<File>) -> HashMap<i64, HashMap<String, (u32, u32)>> {
+    fn prepare_bundles(files: &[File]) -> HashMap<i64, HashMap<String, (u32, u32)>> {
         let mut bundles: HashMap<i64, HashMap<String, (u32, u32)>> = HashMap::new();
 
-        for file in files.clone() {
+        for file in files {
             let mut bundles_min_max: HashMap<String, (u32, u32)> = HashMap::new();
-            for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks {
+            for (bundle_id, offset, _uncompressed_size, compressed_size) in file.chunks.clone() {
                 let from = offset;
                 let to = offset + compressed_size - 1;
                 let bundle_file_name = format!("{bundle_id:016X}.bundle");
@@ -199,27 +199,28 @@ impl RiotManifest {
                         .get(bundle_url.clone())
                         .header(RANGE, format!("bytes={from}-{to}"))
                         .send()
-                        .and_then(|response| response.bytes());
+                        .and_then(reqwest::blocking::Response::bytes);
 
                     match result {
                         Ok(bytes) => {
-                            if bytes.len() != expected_length {
-                                eprintln!(
-                                    "Byte length mismatch for {}: expected {}, got {}",
-                                    bundle_file_name,
-                                    expected_length,
-                                    bytes.len()
-                                );
-                            } else {
-                                let mut bytes_map = bytes_map.lock().unwrap();
-                                bytes_map.insert(bundle_file_name.clone(), bytes.to_vec());
+                            if bytes.len() == expected_length {
+                                bytes_map
+                                    .lock()
+                                    .expect("Failed to get bytes_map")
+                                    .insert(bundle_file_name.clone(), bytes.to_vec());
                                 break;
                             }
+                            eprintln!(
+                                "Byte length mismatch for {}: expected {}, got {}",
+                                bundle_file_name,
+                                expected_length,
+                                bytes.len()
+                            );
                         }
                         Err(e) => {
-                            eprintln!("Attempt {}/3 failed: {}", attempt, e);
+                            eprintln!("Attempt {attempt}/3 failed: {e}");
                             if attempt == 3 {
-                                eprintln!("Failed to fetch {} after 3 attempts", bundle_file_name);
+                                eprintln!("Failed to fetch {bundle_file_name} after 3 attempts");
                             }
                         }
                     }
