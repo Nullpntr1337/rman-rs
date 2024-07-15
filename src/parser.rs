@@ -155,17 +155,15 @@ impl RiotManifest {
             bundles.len()
         );
 
-        let total_bundles: u64 = bundles.values().map(|map| map.len() as u64).sum();
-        let pb = ProgressBar::new(total_bundles);
-        pb.set_style(
-        ProgressStyle::default_bar()
+        let pb = ProgressBar::new(files.len() as u64);
+        pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
             .expect("Error: Failed to set style for PB")
-            .progress_chars("#>-"),
-    );
+            .progress_chars("#>-"));
 
         for file in files {
             pb.set_message(file.name.clone());
+            pb.inc(1);
 
             let bytes_map = Arc::new(Mutex::new(HashMap::new()));
             let bundles_for_file = bundles
@@ -173,7 +171,7 @@ impl RiotManifest {
                 .expect("Error: Bundle was not found for the given file ID");
             let client = reqwest::blocking::Client::new();
 
-            Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn, &pb);
+            Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn);
 
             Self::create_parent_dir(&file.path);
 
@@ -217,47 +215,45 @@ impl RiotManifest {
         bytes_map: &Arc<Mutex<HashMap<String, Vec<u8>>>>,
         bundles_for_file: &HashMap<String, (u32, u32)>,
         bundle_cdn: &str,
-        pb: &ProgressBar,
     ) {
         bundles_for_file
-        .par_iter()
-        .for_each(|(bundle_file_name, (from, to))| {
-            let bundle_url = format!("{bundle_cdn}/{bundle_file_name}");
-            let expected_length = (to - from + 1) as usize;
+            .par_iter()
+            .for_each(|(bundle_file_name, (from, to))| {
+                let bundle_url = format!("{bundle_cdn}/{bundle_file_name}");
+                let expected_length = (to - from + 1) as usize;
 
-            for attempt in 1..=5 {
-                let result = client
-                    .get(bundle_url.clone())
-                    .header(RANGE, format!("bytes={from}-{to}"))
-                    .send()
-                    .and_then(reqwest::blocking::Response::bytes);
+                for attempt in 1..=5 {
+                    let result = client
+                        .get(bundle_url.clone())
+                        .header(RANGE, format!("bytes={from}-{to}"))
+                        .send()
+                        .and_then(reqwest::blocking::Response::bytes);
 
-                match result {
-                    Ok(bytes) => {
-                        if bytes.len() == expected_length {
-                            bytes_map
-                                .lock()
-                                .expect("Error: Failed to lock bytes_map for insertion")
-                                .insert(bundle_file_name.clone(), bytes.to_vec());
-                            pb.inc(1);
-                            break;
+                    match result {
+                        Ok(bytes) => {
+                            if bytes.len() == expected_length {
+                                bytes_map
+                                    .lock()
+                                    .expect("Error: Failed to lock bytes_map for insertion")
+                                    .insert(bundle_file_name.clone(), bytes.to_vec());
+                                break;
+                            }
+                            eprintln!(
+                                "Error: Byte length mismatch for {}: expected {}, got {}",
+                                bundle_file_name,
+                                expected_length,
+                                bytes.len()
+                            );
                         }
-                        eprintln!(
-                            "Error: Byte length mismatch for {}: expected {}, got {}",
-                            bundle_file_name,
-                            expected_length,
-                            bytes.len()
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("Error: Attempt {attempt}/3 to fetch {bundle_file_name} failed: {e}");
-                        if attempt == 3 {
-                            eprintln!("Error: Failed to fetch {bundle_file_name} after 3 attempts");
+                        Err(e) => {
+                            eprintln!("Error: Attempt {attempt}/3 to fetch {bundle_file_name} failed: {e}");
+                            if attempt == 3 {
+                                eprintln!("Error: Failed to fetch {bundle_file_name} after 3 attempts");
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
     }
 
     fn create_parent_dir(file_path: &str) {
