@@ -148,7 +148,7 @@ impl RiotManifest {
     pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
         let bundles = Self::prepare_bundles(&files);
 
-        let available_parallelism = rayon::current_num_threads();
+        let available_parallelism = 4;
         println!(
             "Using {} threads to download {} files",
             available_parallelism,
