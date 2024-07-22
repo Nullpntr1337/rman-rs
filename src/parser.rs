@@ -9,7 +9,7 @@ use reqwest::header::RANGE;
 
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{cmp, fs};
 
@@ -145,7 +145,7 @@ impl RiotManifest {
     /// * It fails to convert the size of the uncompressed data chunk.
     /// * It fails to decompress the data chunk.
     /// * It fails to write the decompressed data chunk to a file.
-    pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str) {
+    pub fn download_files(&self, files: Vec<File>, bundle_cdn: &str, base_dir: &str) {
         let bundles = Self::prepare_bundles(&files);
 
         let available_parallelism = 4;
@@ -156,12 +156,14 @@ impl RiotManifest {
         );
 
         let pb = ProgressBar::new(files.len() as u64);
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-            .expect("Error: Failed to set style for PB")
-            .progress_chars("#>-"));
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                .expect("Error: Failed to set style for PB")
+                .progress_chars("#>-"),
+        );
 
-        for file in files {
+        for mut file in files {
             pb.set_message(file.name.clone());
             pb.inc(1);
 
@@ -173,6 +175,11 @@ impl RiotManifest {
 
             Self::download_bundles(&client, &bytes_map, bundles_for_file, bundle_cdn);
 
+            let path: PathBuf = [base_dir, &file.path].iter().collect();
+            file.path = path
+                .into_os_string()
+                .into_string()
+                .expect("Error: Failed to convert path");
             Self::create_parent_dir(&file.path);
 
             let bytes_map = Arc::try_unwrap(bytes_map)
